@@ -1,6 +1,6 @@
 import { EntityPool } from './entity-pool.js';
 import { ComponentArrays } from './component-arrays.js';
-import { MAX_ENTITIES } from '../constants.js';
+import { MAX_ENTITIES, SB_STRIDE } from '../constants.js';
 
 /**
  * ECS World: owns the entity pool and all component arrays.
@@ -34,15 +34,11 @@ export class World {
   /** Pack all alive entities matching a mask into a Float32Array for rendering. */
   packRenderData(mask, outArray, outOffset = 0) {
     let count = 0;
-    const stride = 6;
     this.pool.query(mask, (id) => {
-      const off = outOffset + count * stride;
+      const off = outOffset + count * SB_STRIDE;
       outArray[off + 0] = this.comps.positionX[id];
       outArray[off + 1] = this.comps.positionY[id];
       outArray[off + 2] = this.comps.spriteIdx[id];
-      outArray[off + 3] = this.comps.spriteVar[id];
-      outArray[off + 4] = this.comps.spriteZ[id];
-      outArray[off + 5] = 0;
       count++;
     });
     return count;

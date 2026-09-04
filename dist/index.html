@@ -8,38 +8,163 @@
   <title>Factory Sim</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; overflow: hidden; background: #111; font-family: monospace; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #0b0b0e; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
     #game-container { position: relative; width: 100%; height: 100%; }
     #game-canvas { display: block; width: 100%; height: 100%; }
-    #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
-    #ui-layer > * { pointer-events: auto; }
-    #hud { position: absolute; top: 12px; left: 12px; color: #0f0; font-size: 13px; line-height: 1.6; text-shadow: 0 0 4px #000; }
-    #toolbar { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 4px; }
-    .tool-btn { width: 48px; height: 48px; background: rgba(0,0,0,0.7); border: 1px solid #555; color: #ccc; font-size: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; border-radius: 4px; }
-    .tool-btn:hover, .tool-btn.active { border-color: #0f0; color: #0f0; }
-    #tooltip { position: absolute; display: none; background: rgba(10,10,10,0.92); border: 1px solid #0f0; color: #ccc; font-size: 12px; padding: 8px 12px; border-radius: 4px; white-space: pre; pointer-events: none; z-index: 100; max-width: 320px; }
-    #minimap { position: absolute; bottom: 12px; right: 12px; width: 160px; height: 160px; border: 1px solid #555; background: rgba(0,0,0,0.6); }
+
+    /* ── Glass panel base (shared by every HUD overlay) ── */
+    #hud, #pwr, #tooltip, #hint {
+      background: rgba(20, 20, 24, 0.85);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      color: #a1a1aa;
+    }
+
+    /* ── Top-left stats panel (right of the toolbar column) ── */
+    #hud {
+      position: fixed;
+      top: 16px;
+      left: 120px;
+      width: 232px;
+      padding: 12px 14px;
+      font-size: 11px;
+      line-height: 1.7;
+      pointer-events: none;
+      user-select: none;
+      z-index: 90;
+    }
+    #hud b { color: #4ade80; font-weight: 700; letter-spacing: 0.4px; }
+    #hud .dim { color: #52525b; }
+
+    /* ── Top-right power panel ── */
+    #pwr {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      width: 190px;
+      padding: 12px 14px;
+      text-align: right;
+      pointer-events: none;
+      user-select: none;
+      z-index: 90;
+    }
+    #pwr-txt { font-size: 12px; font-weight: 700; letter-spacing: 0.3px; }
+    #pwr-bar { width: 100%; height: 10px; background: #18181b; border: 1px solid #3f3f46; border-radius: 5px; margin-top: 8px; overflow: hidden; }
+    #pwr-fill { height: 100%; background: #4ade80; border-radius: 5px; transition: width 0.2s, background 0.2s; }
+
+    /* ── Tool palette ── */
+    #toolbar {
+      position: fixed;
+      top: 60px;
+      left: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: rgba(20, 20, 24, 0.85);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      padding: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      user-select: none;
+    }
+
+    .tool-btn {
+      width: 56px;
+      height: 56px;
+      background: #2a2a2c;
+      border: 1px solid #3f3f46;
+      border-radius: 6px;
+      color: #a1a1aa;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      transition: all 0.1s ease-out;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-transform: uppercase;
+    }
+
+    .tool-btn:hover {
+      background: #3f3f46;
+      color: #f4f4f5;
+      border-color: #71717a;
+      transform: translateX(4px);
+    }
+
+    .tool-btn.active {
+      background: rgba(34, 197, 94, 0.15);
+      color: #4ade80;
+      border: 1px solid #4ade80;
+      box-shadow: 0 0 12px rgba(74, 222, 128, 0.3) inset;
+    }
+
+    /* ── Hover info tooltip ── */
+    #tooltip {
+      position: fixed;
+      display: none;
+      padding: 8px 12px;
+      font-size: 11px;
+      line-height: 1.6;
+      white-space: pre;
+      pointer-events: none;
+      z-index: 200;
+      max-width: 320px;
+      border-color: rgba(74, 222, 128, 0.35);
+    }
+
+    /* ── Bottom-center contextual hint ── */
+    #hint {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: none;
+      padding: 8px 18px;
+      font-size: 12px;
+      color: #4ade80;
+      letter-spacing: 0.3px;
+      pointer-events: none;
+      z-index: 90;
+    }
   </style>
-  <script type="module" crossorigin src="/assets/index-BWHXgdDh.js"></script>
+  <script type="module" crossorigin src="/assets/index-qkeTv80-.js"></script>
 </head>
 <body>
   <div id="game-container">
     <canvas id="game-canvas"></canvas>
-    <div id="ui-layer">
-      <div id="hud"></div>
-      <div id="toolbar">
-        <button class="tool-btn active" data-tool="select" title="Select / Inspect">SEL</button>
-        <button class="tool-btn" data-tool="miner" title="Mining Drill">MINE</button>
-        <button class="tool-btn" data-tool="belt" title="Conveyor Belt">BILT</button>
-        <button class="tool-btn" data-tool="smelter" title="Smelter">SMELT</button>
-        <button class="tool-btn" data-tool="assembler" title="Assembler">ASSM</button>
-        <button class="tool-btn" data-tool="pole" title="Power Pole">PWR</button>
-        <button class="tool-btn" data-tool="generator" title="Steam Generator">GEN</button>
-        <button class="tool-btn" data-tool="eraser" title="Eraser">ERSE</button>
-      </div>
-      <div id="tooltip"></div>
-      <canvas id="minimap"></canvas>
+
+    <!-- Stats / status panels -->
+    <div id="hud"></div>
+    <div id="pwr">
+      <div id="pwr-txt">Power: 100%</div>
+      <div id="pwr-bar"><div id="pwr-fill" style="width:100%"></div></div>
     </div>
+
+    <!-- Build tool palette -->
+    <div id="toolbar">
+      <button class="tool-btn active" data-tool="select" title="Select / Inspect">SEL</button>
+      <button class="tool-btn" data-tool="miner" title="Mining Drill">MINE</button>
+      <button class="tool-btn" data-tool="belt" title="Conveyor Belt">BILT</button>
+      <button class="tool-btn" data-tool="smelter" title="Smelter">SMELT</button>
+      <button class="tool-btn" data-tool="assembler" title="Assembler">ASSM</button>
+      <button class="tool-btn" data-tool="pole" title="Power Pole">PWR</button>
+      <button class="tool-btn" data-tool="generator" title="Steam Generator">GEN</button>
+      <button class="tool-btn" data-tool="eraser" title="Eraser">ERSE</button>
+    </div>
+
+    <!-- Cursor-following tooltip + hint -->
+    <div id="tooltip"></div>
+    <div id="hint"></div>
   </div>
 </body>
 </html>

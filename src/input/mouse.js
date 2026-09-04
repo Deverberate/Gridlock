@@ -29,8 +29,8 @@ export class Mouse {
     canvas.addEventListener('mousedown', (e) => {
       this.buttons |= (1 << e.button);
 
-      // Middle-click or right-click starts pan
-      if (e.button === 1 || e.button === 2) {
+      // Right-click starts pan (middle-click is reserved for the eyedropper)
+      if (e.button === 2) {
         this._isPanning = true;
         this._panStart = { x: this.x, y: this.y };
         this._panDeltaX = 0;
@@ -42,7 +42,7 @@ export class Mouse {
     canvas.addEventListener('mouseup', (e) => {
       this.buttons &= ~(1 << e.button);
 
-      if ((e.button === 1 || e.button === 2) && this._isPanning) {
+      if (e.button === 2 && this._isPanning) {
         this._isPanning = false;
         this._panStart = null;
       }

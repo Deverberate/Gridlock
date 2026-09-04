@@ -1,0 +1,28 @@
+
+  VITE v8.2.2  ready in 144 ms
+
+  ➜  Local:   http://127.0.0.1:5199/
+11:46:25 AM [vite] (client) page reload src/constants.js
+11:46:33 AM [vite] (client) page reload src/shared-buffer.js
+11:46:44 AM [vite] (client) page reload src/worker.js
+11:46:58 AM [vite] (client) page reload src/render/webgl-init.js
+11:47:09 AM [vite] (client) page reload src/render/instanced-renderer.js
+11:47:33 AM [vite] (client) page reload src/input/camera-controls.js
+11:47:33 AM [vite] (client) page reload src/input/mouse.js
+11:48:31 AM [vite] (client) page reload src/main.js
+11:48:38 AM [vite] (client) page reload src/main.js
+11:49:51 AM [vite] (client) page reload src/main.js
+11:52:01 AM [vite] (client) page reload src/main.js
+11:55:12 AM [vite] (client) page reload src/main.js
+11:58:47 AM [vite] (client) page reload src/main.js
+11:59:33 AM [vite] (client) page reload src/main.js
+12:00:46 PM [vite] (client) page reload src/main.js
+12:01:55 PM [vite] (client) page reload src/main.js
+12:13:28 PM [vite] (client) page reload index.html
+12:18:14 PM [vite] (client) page reload src/worker.js
+12:18:20 PM [vite] (client) page reload src/main.js
+12:18:26 PM [vite] (client) page reload src/main.js
+12:18:26 PM [vite] (client) page reload src/render/camera.js
+12:19:44 PM [vite] (client) page reload src/ecs/systems/machines.js
+12:21:10 PM [vite] (client) page reload src/worker.js
+12:21:47 PM [vite] (client) page reload src/main.js

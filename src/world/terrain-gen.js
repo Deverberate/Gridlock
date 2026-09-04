@@ -1,4 +1,4 @@
-import { CHUNK_SIZE, TERRAIN_GRASS, TERRAIN_WATER, TERRAIN_STONE } from '../constants.js';
+import { CHUNK_SIZE, TERRAIN_GRASS, TERRAIN_WATER, TERRAIN_STONE, RES_IRON, RES_COPPER } from '../constants.js';
 import { ChunkMap } from '../spatial/chunk-map.js';
 
 // ── Simple seeded noise (value noise with lerp) ─────────
@@ -41,9 +41,11 @@ function fbm(x, y, seed, octaves = 4) {
 }
 
 /**
- * Generate terrain for a chunk using seeded simplex-like noise.
- * Tiles: TERRAIN_GRASS (0), TERRAIN_WATER (1), TERRAIN_STONE (2)
- * Resources: float value > 0 means ore present, value = amount
+ * Generate terrain for a chunk using seeded value noise.
+ * Tile thresholds + ore deposit rules are EXACTLY the demo.html values so the
+ * worker sim and the main-thread render mirror produce identical worlds:
+ *   ore noise > 0.45  -> deposit, amount = (ore - 0.45) * 500
+ *   ore noise > 0.60  -> copper, otherwise iron
  */
 export function generateChunkTerrain(chunkMap, cx, cy, seed = 42) {
   const chunk = chunkMap.getOrCreate(cx, cy);
@@ -70,14 +72,57 @@ export function generateChunkTerrain(chunkMap, cx, cy, seed = 42) {
 
       chunk.tiles[ly * CHUNK_SIZE + lx] = tile;
 
-      // Ore patches: use a different noise layer
-      const oreNoise = fbm(wx * 0.05 + 500, wy * 0.05 + 500, seed + 999, 3);
-      if (oreNoise > 0.65 && tile !== TERRAIN_WATER) {
-        // Amount scales with noise intensity
-        chunk.resources[ly * CHUNK_SIZE + lx] = (oreNoise - 0.65) * 500;
+      // Ore deposits: same noise field + thresholds as demo.html
+      const ore = fbm(wx * 0.05 + 500, wy * 0.05 + 500, 1041, 3);
+      if (ore > 0.45 && tile !== TERRAIN_WATER) {
+        chunk.resources[ly * CHUNK_SIZE + lx] = (ore - 0.45) * 500; // amount
+        chunk.resourceType[ly * CHUNK_SIZE + lx] = ore > 0.6 ? RES_COPPER : RES_IRON;
       }
     }
   }
 
   chunk.dirty = true;
+}
+
+/** Ensure the chunk at (cx, cy) exists (generated on demand). */
+export function ensureChunk(chunkMap, cx, cy) {
+  let chunk = chunkMap.get(cx, cy);
+  if (!chunk) {
+    generateChunkTerrain(chunkMap, cx, cy);
+    chunk = chunkMap.get(cx, cy);
+  }
+  return chunk;
+}
+
+/**
+ * Read terrain + deposit info for a world tile, generating the chunk on demand.
+ * Returns { tile, res, resType }.
+ */
+export function tileInfo(chunkMap, wx, wy) {
+  const cx = Math.floor(wx / CHUNK_SIZE);
+  const cy = Math.floor(wy / CHUNK_SIZE);
+  const chunk = ensureChunk(chunkMap, cx, cy);
+  const lx = ((wx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+  const ly = ((wy % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+  const i = ly * CHUNK_SIZE + lx;
+  return { tile: chunk.tiles[i], res: chunk.resources[i], resType: chunk.resourceType[i] };
+}
+
+/**
+ * Consume `amt` ore from a deposit at a world tile.
+ * Returns the deposit's resource type when enough was present (RES_IRON/RES_COPPER),
+ * or RES_NONE otherwise. Used by the miner system.
+ */
+export function consumeResourceAt(chunkMap, wx, wy, amt) {
+  const cx = Math.floor(wx / CHUNK_SIZE);
+  const cy = Math.floor(wy / CHUNK_SIZE);
+  const chunk = ensureChunk(chunkMap, cx, cy);
+  const lx = ((wx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+  const ly = ((wy % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+  const i = ly * CHUNK_SIZE + lx;
+  if (chunk.resources[i] >= amt) {
+    chunk.resources[i] -= amt;
+    return chunk.resourceType[i];
+  }
+  return 0; // RES_NONE
 }

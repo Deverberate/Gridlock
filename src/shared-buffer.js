@@ -1,65 +1,69 @@
-import { MAX_ENTITIES, SB_STRIDE } from './constants.js';
+import {
+  SAB_TOTAL_SLOTS, OFF_INST_A, OFF_INST_B,
+  SB_HEADER_SLOTS, SB_HDR_FLAG, SB_HDR_COUNT,
+} from './constants.js';
 
 /**
  * Double-buffer SharedArrayBuffer architecture.
- * 
- * Buffer is split into two halves (A and B).
- * Worker writes to one while main thread reads from the other.
- * An atomic flag (index 0) signals which buffer is current:
- *   0 = buffer A is current (worker just finished writing A, main reads A)
- *   1 = buffer B is current
- * 
- * Layout:
- *   [0]       = swap flag (Int32)
- *   [1]       = entity count (Int32)
- *   [2..N]    = entity render data (SB_STRIDE floats per entity, repeated twice for A and B)
+ *
+ * Layout (every slot is 4 bytes; an Int32Array and Float32Array over the same
+ * buffer therefore index identically):
+ *
+ *   [0]            swap flag  (int)    0 = half A current, 1 = half B current
+ *   [1]            instance count (int)
+ *   [2..8]         float stats written by the worker each tick:
+ *                    pwrRatio, totalGen, totalReq, machines, beltLines,
+ *                    beltItems, jammed
+ *   [OFF_INST_A ..]        half A: SNAPSHOT_CAP × SB_STRIDE sprite instances
+ *   [OFF_INST_B ..]        half B: same
+ *   [OFF_MACH_TABLE ..]    machine metadata table (one MACH_T_STRIDE-float row
+ *                          per machine, MACH_TABLE_CAP rows) for tooltips,
+ *                          the eyedropper, and heat-map overlays
+ *
+ * The worker writes into the non-current instance half while the main thread
+ * reads the current one; Atomics.store on the flag publishes each swap.
+ * All offsets come from the shared constants module, so no layout
+ * negotiation is needed between threads.
  */
-
-const TOTAL_SIZE_PER_HALF = 2 + (MAX_ENTITIES * SB_STRIDE); // Int32 header + entity data
-const TOTAL_SIZE = 2 + (TOTAL_SIZE_PER_HALF * 2); // flag + count + A half + B half
-
 export class SharedBufferManager {
   constructor() {
-    this.buffer = new SharedArrayBuffer(TOTAL_SIZE * 4); // 4 bytes per Float32/Int32
+    this.buffer = new SharedArrayBuffer(SAB_TOTAL_SLOTS * 4);
     this.view = new Int32Array(this.buffer);
     this.fView = new Float32Array(this.buffer);
 
-    // Layout offsets (in Int32 units)
-    this.OFF_FLAG   = 0;
-    this.OFF_COUNT  = 1;
-    this.OFF_A_DATA = 2;
-    this.OFF_B_DATA = 2 + TOTAL_SIZE_PER_HALF;
+    this.OFF_A_DATA = OFF_INST_A;
+    this.OFF_B_DATA = OFF_INST_B;
 
-    // Initialize
-    Atomics.store(this.view, this.OFF_FLAG, 0);
-    Atomics.store(this.view, this.OFF_COUNT, 0);
+    // Initialize header
+    Atomics.store(this.view, SB_HDR_FLAG, 0);
+    Atomics.store(this.view, SB_HDR_COUNT, 0);
   }
 
-  /** Get the write buffer offset for the worker (always writes to the non-current half). */
+  /** Slot the worker should write into this cycle (the non-current half). */
   getWriteOffset() {
-    const flag = Atomics.load(this.view, this.OFF_FLAG);
+    const flag = Atomics.load(this.view, SB_HDR_FLAG);
     return flag === 0 ? this.OFF_B_DATA : this.OFF_A_DATA;
   }
 
-  /** Get the read buffer offset for the main thread (always reads the current half). */
+  /** Slot the main thread should read from (the current half). */
   getReadOffset() {
-    const flag = Atomics.load(this.view, this.OFF_FLAG);
+    const flag = Atomics.load(this.view, SB_HDR_FLAG);
     return flag === 0 ? this.OFF_A_DATA : this.OFF_B_DATA;
   }
 
-  /** Worker calls this after writing all entity data to signal a swap. */
+  /** Worker publishes a finished half: store count, flip the flag. */
   swap(count) {
-    Atomics.store(this.view, this.OFF_COUNT, count);
-    const flag = Atomics.load(this.view, this.OFF_FLAG);
-    Atomics.store(this.view, this.OFF_FLAG, flag === 0 ? 1 : 0);
+    Atomics.store(this.view, SB_HDR_COUNT, count);
+    const flag = Atomics.load(this.view, SB_HDR_FLAG);
+    Atomics.store(this.view, SB_HDR_FLAG, flag === 0 ? 1 : 0);
   }
 
-  /** Main thread reads the current entity count. */
+  /** Current instance count (main thread). */
   getCount() {
-    return Atomics.load(this.view, this.OFF_COUNT);
+    return Atomics.load(this.view, SB_HDR_COUNT);
   }
 
-  /** Get raw SharedArrayBuffer for posting to worker. */
+  /** Raw SharedArrayBuffer for posting to the worker. */
   getBuffer() {
     return this.buffer;
   }

@@ -3,13 +3,12 @@
  * Batches thousands of identical sprites into single draw calls via WebGL 2 instanced arrays.
  *
  * Reads entity positions from the SharedArrayBuffer (double-buffered).
+ * Instance stride = SB_STRIDE floats: x, y, spriteIdx.
  */
 
-import { TILE_SIZE, SB_STRIDE } from '../constants.js';
+import { TILE_SIZE, SB_STRIDE, SNAPSHOT_CAP } from '../constants.js';
 import { createSpriteProgram } from './webgl-init.js';
 import { generateSpriteAtlas } from './sprite-atlas.js';
-
-const MAX_INSTANCES = 100_000;
 
 export class InstancedRenderer {
   constructor(gl) {
@@ -29,8 +28,8 @@ export class InstancedRenderer {
       -1,  1,  0, 0,
     ]);
 
-    // Per-instance data buffer (x, y, spriteIdx, variant, zOrder, pad) * MAX_INSTANCES
-    this.instanceData = new Float32Array(MAX_INSTANCES * SB_STRIDE);
+    // Per-instance data buffer (x, y, spriteIdx) * capacity
+    this.instanceData = new Float32Array(SNAPSHOT_CAP * SB_STRIDE);
     this.instanceCount = 0;
 
     this._initBuffers(gl);
@@ -76,18 +75,6 @@ export class InstancedRenderer {
     gl.vertexAttribPointer(locIdx, 1, gl.FLOAT, false, stride, 8);
     gl.vertexAttribDivisor(locIdx, 1);
 
-    // a_variant: float
-    const locVar = gl.getAttribLocation(this.program, 'a_variant');
-    gl.enableVertexAttribArray(locVar);
-    gl.vertexAttribPointer(locVar, 1, gl.FLOAT, false, stride, 12);
-    gl.vertexAttribDivisor(locVar, 1);
-
-    // a_zOrder: float
-    const locZ = gl.getAttribLocation(this.program, 'a_zOrder');
-    gl.enableVertexAttribArray(locZ);
-    gl.vertexAttribPointer(locZ, 1, gl.FLOAT, false, stride, 16);
-    gl.vertexAttribDivisor(locZ, 1);
-
     gl.bindVertexArray(null);
   }
 
@@ -111,35 +98,29 @@ export class InstancedRenderer {
     this.uAtlasCols  = gl.getUniformLocation(this.program, 'u_atlasCols');
     this.uSpriteSize = gl.getUniformLocation(this.program, 'u_spriteSize');
     this.uAtlas      = gl.getUniformLocation(this.program, 'u_atlas');
+    this.uAlphaMul   = gl.getUniformLocation(this.program, 'u_alphaMul');
     gl.useProgram(null);
   }
 
   /**
-   * Update instance data from SharedArrayBuffer.
-   * @param {Int32Array} sharedView - The read half of the double buffer
-   * @param {number} readOffset - Start offset of the read half (in Int32 units)
-   * @param {number} count - Number of entities
+   * Update instance data from the SharedArrayBuffer read half.
+   * @param {Int32Array} sharedView - Int32 view over the whole SAB
+   * @param {number} readOffset - Start slot of the read half (Int32 units)
+   * @param {number} count - Number of instances in that half
    */
   updateFromSharedBuffer(sharedView, readOffset, count) {
-    const fView = new Float32Array(sharedView.buffer);
-    const capped = Math.min(count, MAX_INSTANCES);
+    const capped = Math.min(count, SNAPSHOT_CAP);
     this.instanceCount = capped;
+    if (capped === 0) return;
 
-    // Copy from SharedArrayBuffer read half directly into instance data
-    // Layout matches: SB_STRIDE floats per entity
-    const srcByteOffset = readOffset * 4;
-    const dst = this.instanceData;
-    const fSrc = new Float32Array(
-      sharedView.buffer,
-      srcByteOffset,
-      capped * SB_STRIDE
-    );
-    dst.set(fSrc.subarray(0, capped * SB_STRIDE));
+    const srcByteOffset = readOffset * 4; // Int32 slot -> byte
+    const fSrc = new Float32Array(sharedView.buffer, srcByteOffset, capped * SB_STRIDE);
+    this.instanceData.set(fSrc);
   }
 
   /**
    * Render all instances.
-   * @param {Float32Array} projection - 4x4 orthographic projection matrix
+   * @param {Float32Array} projection - orthographic projection matrix
    */
   render(projection) {
     const { gl, program } = this;
@@ -152,6 +133,7 @@ export class InstancedRenderer {
     gl.uniform1f(this.uTileSize, TILE_SIZE);
     gl.uniform1f(this.uAtlasCols, this.atlas.atlasCols);
     gl.uniform1f(this.uSpriteSize, 1.0 / this.atlas.atlasRows);
+    gl.uniform1f(this.uAlphaMul, 1.0); // opaque main pass
 
     // Bind atlas texture
     gl.activeTexture(gl.TEXTURE0);

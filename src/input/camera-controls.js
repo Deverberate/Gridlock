@@ -22,8 +22,8 @@ export class CameraControls {
       camera.pan(px, py);
     }
 
-    // Middle-click drag panning
-    if (mouse.isMiddle() || mouse.isRight()) {
+    // Right-drag panning (middle-click is the eyedropper)
+    if (mouse.isRight()) {
       const pan = mouse.getPanDelta();
       if (pan.dx !== 0 || pan.dy !== 0) {
         camera.pan(pan.dx, pan.dy);

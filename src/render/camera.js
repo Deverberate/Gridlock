@@ -8,7 +8,7 @@ export class Camera {
   constructor(canvasWidth, canvasHeight) {
     this.x = 0;       // center in tile coords
     this.y = 0;
-    this.zoom = 2.0;   // pixels per tile = TILE_SIZE * zoom
+    this.zoom = 4.0;   // pixels per tile = TILE_SIZE * zoom (2x baseline so the factory reads at a glance)
     this.width = canvasWidth;
     this.height = canvasHeight;
   }
@@ -28,7 +28,7 @@ export class Camera {
   /** Zoom toward a screen point. */
   zoomAt(screenX, screenY, factor) {
     const oldZoom = this.zoom;
-    this.zoom = Math.max(0.25, Math.min(8.0, this.zoom * factor));
+    this.zoom = Math.max(0.25, Math.min(16.0, this.zoom * factor));
 
     // Adjust position so the point under the cursor stays fixed
     const scale = TILE_SIZE * this.zoom;

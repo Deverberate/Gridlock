@@ -3,13 +3,13 @@ import { MAX_ENTITIES } from '../constants.js';
 /**
  * Struct-of-Arrays component storage.
  * Each component type lives in its own pre-allocated typed array.
- * Access pattern: arrays[componentName][entityId * fields + fieldIndex]
+ * Access pattern: arrays[componentName][entityId]
  */
 export class ComponentArrays {
   constructor(max = MAX_ENTITIES) {
     this.max = max;
 
-    // Position: x, y
+    // Position: x, y (tile coords, entity center at tile+.5)
     this.positionX   = new Float32Array(max);
     this.positionY   = new Float32Array(max);
 
@@ -25,10 +25,23 @@ export class ComponentArrays {
     this.velocityX   = new Float32Array(max);
     this.velocityY   = new Float32Array(max);
 
-    // Machine: recipe_id, progress (0-1), power_kw, status (0=idle,1=working,2=nopower,3=jammed)
+    // ── Machine state (Phase 2 parity) ───────────────────
+    // machineType: MACH_NONE|MACH_MINER|MACH_SMELTER|MACH_ASSEMBLER|MACH_GENERATOR|MACH_POLE
+    this.machineType       = new Uint8Array(max);
+    // Process timer in SECONDS since recipe start (progress in demo terms)
+    this.machineProgress   = new Float32Array(max);
+    // Power draw (kW) for consumers / generation (kW) for generators
+    this.machinePowerDraw  = new Float32Array(max);
+    this.machinePowerGen   = new Float32Array(max);
+    // 1 = receiving power this tick (set by PowerGridSystem), 0 = offline
+    this.machinePowered    = new Uint8Array(max);
+    // Input buffering: last accepted item type, count held, count required
+    this.machineInputType  = new Uint8Array(max);
+    this.machineInputCount = new Uint8Array(max);
+    this.machineInputReq   = new Uint8Array(max);
+
+    // ── Phase-1 scaffolding (unused by Phase 2 logic) ────
     this.machineRecipe = new Uint16Array(max);
-    this.machineProgress = new Float32Array(max);
-    this.machinePower  = new Float32Array(max);
     this.machineStatus = new Uint8Array(max);
 
     // BeltRef: belt_line_id, distance_along_line
@@ -59,8 +72,5 @@ export class ComponentArrays {
     target[offset + 0] = this.positionX[id];
     target[offset + 1] = this.positionY[id];
     target[offset + 2] = this.spriteIdx[id];
-    target[offset + 3] = this.spriteVar[id];
-    target[offset + 4] = this.spriteZ[id];
-    target[offset + 5] = 0; // pad
   }
 }

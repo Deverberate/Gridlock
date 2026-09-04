@@ -27,6 +27,13 @@ export const SPRITE_IRON_ORE = 12;
 export const SPRITE_COPPER_ORE = 13;
 export const SPRITE_GEAR    = 14;
 export const SPRITE_IRON_INGOT = 15;
+export const SPRITE_COPPER_INGOT = 16;
+export const SPRITE_MACH_OFF = 17;
+export const SPRITE_ITEM_GENERIC = 18;
+export const SPRITE_MINER_ON = 19;
+export const SPRITE_SMELTER_ON = 20;
+export const SPRITE_ASSEMBLER_ON = 21;
+export const SPRITE_GENERATOR_ON = 22;
 
 /**
  * Generate the atlas as an OffscreenCanvas, return it + metadata.
@@ -262,6 +269,94 @@ export function generateSpriteAtlas() {
     c.fillRect(3, 6, 10, 5);
     c.fillStyle = '#ccddee';
     c.fillRect(4, 7, 8, 3);
+    ctx.restore();
+  }
+
+  // ── 16: Copper ingot ──
+  {
+    const c = at(SPRITE_COPPER_INGOT);
+    c.fillStyle = '#cc8844';
+    c.fillRect(3, 6, 10, 5);
+    c.fillStyle = '#eeaa66';
+    c.fillRect(4, 7, 8, 3);
+    ctx.restore();
+  }
+
+  // ── 17: Machine off (dark, red light) ──
+  {
+    const c = at(SPRITE_MACH_OFF);
+    c.fillStyle = '#2d5a1e';
+    c.fillRect(0, 0, 16, 16);
+    c.fillStyle = '#444';
+    c.fillRect(3, 3, 10, 10);
+    c.fillStyle = '#a00';
+    c.fillRect(7, 7, 2, 2);
+    ctx.restore();
+  }
+
+  // ── 18: Item dot (generic) ──
+  {
+    const c = at(SPRITE_ITEM_GENERIC);
+    c.fillStyle = '#dd0';
+    c.fillRect(5, 5, 6, 6);
+    c.fillStyle = '#ff6';
+    c.fillRect(6, 6, 4, 4);
+    ctx.restore();
+  }
+
+  // ── 19: Miner active ──
+  {
+    const c = at(SPRITE_MINER_ON);
+    c.fillStyle = '#2d5a1e';
+    c.fillRect(0, 0, 16, 16);
+    c.fillStyle = '#aaa';
+    c.fillRect(4, 3, 8, 10);
+    c.fillStyle = '#cc8833';
+    c.fillRect(6, 5, 4, 4);
+    c.fillStyle = '#ffa';
+    c.fillRect(7, 9, 2, 3);
+    ctx.restore();
+  }
+
+  // ── 20: Smelter active ──
+  {
+    const c = at(SPRITE_SMELTER_ON);
+    c.fillStyle = '#2d5a1e';
+    c.fillRect(0, 0, 16, 16);
+    c.fillStyle = '#885533';
+    c.fillRect(3, 4, 10, 8);
+    c.fillStyle = '#ee5500';
+    c.fillRect(5, 6, 6, 4);
+    c.fillStyle = '#ffaa00';
+    c.fillRect(6, 7, 4, 2);
+    ctx.restore();
+  }
+
+  // ── 21: Assembler active ──
+  {
+    const c = at(SPRITE_ASSEMBLER_ON);
+    c.fillStyle = '#2d5a1e';
+    c.fillRect(0, 0, 16, 16);
+    c.fillStyle = '#666';
+    c.fillRect(2, 3, 12, 10);
+    c.fillStyle = '#55aaee';
+    c.fillRect(4, 5, 8, 6);
+    c.fillStyle = '#88ccff';
+    c.fillRect(6, 7, 4, 2);
+    ctx.restore();
+  }
+
+  // ── 22: Generator active ──
+  {
+    const c = at(SPRITE_GENERATOR_ON);
+    c.fillStyle = '#2d5a1e';
+    c.fillRect(0, 0, 16, 16);
+    c.fillStyle = '#777';
+    c.fillRect(3, 2, 10, 12);
+    c.fillStyle = '#55cc55';
+    c.fillRect(5, 4, 6, 3);
+    c.fillStyle = '#bbb';
+    c.fillRect(6, 8, 4, 4);
     ctx.restore();
   }
 

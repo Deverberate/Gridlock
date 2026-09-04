@@ -7,7 +7,7 @@ import { CHUNK_SIZE, TILE_SIZE } from '../constants.js';
  */
 export class ChunkMap {
   constructor() {
-    /** @type {Map<string, { tiles: Uint8Array, resources: Float32Array, dirty: boolean }>} */
+    /** @type {Map<string, { tiles: Uint8Array, resources: Float32Array, resourceType: Uint8Array, dirty: boolean }>} */
     this.chunks = new Map();
   }
 
@@ -24,6 +24,7 @@ export class ChunkMap {
       chunk = {
         tiles: new Uint8Array(CHUNK_SIZE * CHUNK_SIZE),
         resources: new Float32Array(CHUNK_SIZE * CHUNK_SIZE),
+        resourceType: new Uint8Array(CHUNK_SIZE * CHUNK_SIZE),
         dirty: true,
       };
       this.chunks.set(k, chunk);

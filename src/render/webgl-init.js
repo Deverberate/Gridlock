@@ -6,6 +6,7 @@ export function initWebGL(canvas) {
     antialias: false,
     alpha: false,
     premultipliedAlpha: false,
+    preserveDrawingBuffer: true, // lets preview/readPixels capture frames
   });
 
   if (!gl) {
@@ -21,12 +22,13 @@ export function initWebGL(canvas) {
 
 /**
  * Compile and link the instanced sprite shader program.
- * 
- * Vertex shader receives:
- *   Per-vertex: a_quad (corner offset), a_uv (texture coords)
- *   Per-instance: a_position (world pos), a_spriteIdx, a_variant, a_zOrder
- * 
- * Uniforms: u_projection (orthographic), u_atlas (texture), u_atlasSize
+ *
+ * Per-instance stride is 3 floats (SB_STRIDE): x, y, spriteIdx.
+ *   Per-vertex:  a_quad (corner offset), a_uv (texture coords)
+ *   Per-instance: a_position (world pos), a_spriteIdx
+ *
+ * Uniforms: u_projection (orthographic), u_tileSize, u_atlas (texture),
+ *           u_atlasCols, u_spriteSize (1 / atlas cell rows)
  */
 export function createSpriteProgram(gl) {
   const vs = `#version 300 es
@@ -39,8 +41,6 @@ export function createSpriteProgram(gl) {
     // Per-instance
     in vec2 a_position;
     in float a_spriteIdx;
-    in float a_variant;
-    in float a_zOrder;
 
     uniform mat4 u_projection;
     uniform float u_tileSize;
@@ -48,17 +48,14 @@ export function createSpriteProgram(gl) {
     uniform float u_spriteSize;
 
     out vec2 v_uv;
-    out float v_spriteIdx;
 
     void main() {
-      // Calculate UV within the atlas
+      // Calculate UV within the atlas grid (square cell grid)
       float col = mod(a_spriteIdx, u_atlasCols);
       float row = floor(a_spriteIdx / u_atlasCols);
-      vec2 atlasUV = vec2(col, row) * u_spriteSize + a_uv * u_spriteSize;
-      v_uv = atlasUV;
-      v_spriteIdx = a_spriteIdx;
+      v_uv = vec2(col, row) * u_spriteSize + a_uv * u_spriteSize;
 
-      // World position + quad offset
+      // World position (tile center) + quad corner offset
       vec2 worldPos = a_position * u_tileSize + a_quad * u_tileSize * 0.5;
       gl_Position = u_projection * vec4(worldPos, 0.0, 1.0);
     }
@@ -68,16 +65,60 @@ export function createSpriteProgram(gl) {
     precision highp float;
 
     in vec2 v_uv;
-    in float v_spriteIdx;
 
     uniform sampler2D u_atlas;
+    uniform float u_alphaMul;
 
     out vec4 fragColor;
 
     void main() {
       vec4 color = texture(u_atlas, v_uv);
       if (color.a < 0.01) discard;
-      fragColor = color;
+      fragColor = vec4(color.rgb, color.a * u_alphaMul);
+    }
+  `;
+
+  return compileProgram(gl, vs, fs);
+}
+
+/**
+ * Overlay heat-map program: full-tile translucent quads, one instance per
+ * highlighted tile, colored entirely on the GPU from per-instance attributes.
+ * Used for the Power-load and Belt-throughput overlays toggled by the number
+ * keys — no DOM involved.
+ *
+ *   Per-vertex:  a_quad (corner offset, -1..1)
+ *   Per-instance: a_position (world pos), a_color (rgba)
+ */
+export function createOverlayProgram(gl) {
+  const vs = `#version 300 es
+    precision highp float;
+
+    in vec2 a_quad;
+    in vec2 a_position;
+    in vec4 a_color;
+
+    uniform mat4 u_projection;
+    uniform float u_tileSize;
+
+    out vec4 v_color;
+
+    void main() {
+      v_color = a_color;
+      vec2 worldPos = a_position * u_tileSize + a_quad * u_tileSize * 0.5;
+      gl_Position = u_projection * vec4(worldPos, 0.0, 1.0);
+    }
+  `;
+
+  const fs = `#version 300 es
+    precision highp float;
+
+    in vec4 v_color;
+
+    out vec4 fragColor;
+
+    void main() {
+      fragColor = v_color;
     }
   `;
 
