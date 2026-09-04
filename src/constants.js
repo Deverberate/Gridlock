@@ -88,6 +88,9 @@ export const SPR_MINER_ON     = 19;
 export const SPR_SMELTER_ON   = 20;
 export const SPR_ASSEMBLER_ON = 21;
 export const SPR_GENERATOR_ON = 22;
+export const SPR_SMELTER_OFF    = 23;  // unpowered smelter (dead ash core)
+export const SPR_ASSEMBLER_OFF  = 24;  // unpowered assembler (dark static)
+export const SPR_MINER_OFF      = 25;  // unpowered miner (dimmed hazard stripes)
 
 // Item type -> atlas sprite index (matches demo itemSpr table)
 export const ITEM_SPRITES = [

@@ -40,7 +40,8 @@ import {
   ITEM_SPRITES, SPR_ITEM_DOT,
   SPR_MINER, SPR_SMELTER, SPR_ASSEMBLER, SPR_GENERATOR, SPR_POWER_POLE,
   SPR_MINER_ON, SPR_SMELTER_ON, SPR_ASSEMBLER_ON, SPR_GENERATOR_ON,
-  SPR_MACH_OFF, SPR_BELT_H, SPR_BELT_V,
+  SPR_MACH_OFF, SPR_SMELTER_OFF, SPR_ASSEMBLER_OFF, SPR_MINER_OFF,
+  SPR_BELT_H, SPR_BELT_V,
   RES_IRON,
 } from './constants.js';
 
@@ -75,6 +76,18 @@ let env = {
 // ═══════════════════════════════════════════════════════
 //  SPAWN HELPERS
 // ═══════════════════════════════════════════════════════
+
+/** Unpowered sprite per machine kind — distinct "dead" art per machine. */
+function offSprite(kind) {
+  switch (kind) {
+    case MACH_MINER:     return SPR_MINER_OFF;
+    case MACH_SMELTER:   return SPR_SMELTER_OFF;
+    case MACH_ASSEMBLER: return SPR_ASSEMBLER_OFF;
+    case MACH_GENERATOR: return SPR_GENERATOR_ON; // generators power themselves
+    case MACH_POLE:      return SPR_POWER_POLE;
+    default:             return SPR_MACH_OFF;
+  }
+}
 
 function baseSprite(kind) {
   switch (kind) {
@@ -176,7 +189,7 @@ function machineSprite(id) {
   const c = world.comps;
   const t = c.machineType[id];
   if (t === MACH_POLE) return SPR_POWER_POLE; // poles never switch sprites
-  if (!c.machinePowered[id]) return SPR_MACH_OFF;
+  if (!c.machinePowered[id]) return offSprite(t); // per-type unpowered art
   switch (t) {
     case MACH_MINER:     return SPR_MINER_ON;
     case MACH_SMELTER:   return c.machineInputCount[id] > 0 ? SPR_SMELTER_ON : SPR_SMELTER;

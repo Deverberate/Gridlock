@@ -26,3 +26,7 @@
 12:19:44 PM [vite] (client) page reload src/ecs/systems/machines.js
 12:21:10 PM [vite] (client) page reload src/worker.js
 12:21:47 PM [vite] (client) page reload src/main.js
+12:48:15 PM [vite] (client) page reload src/render/sprite-atlas.js
+12:48:33 PM [vite] (client) page reload src/worker.js
+12:48:33 PM [vite] (client) page reload src/constants.js
+12:48:48 PM [vite] (client) page reload src/main.js

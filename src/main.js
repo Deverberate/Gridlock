@@ -67,10 +67,15 @@ camera.y = -2;
 
 let gl = null;
 function resizeCanvas() {
+  // Size from the canvas's ACTUAL layout box (clientWidth/clientHeight), not
+  // window.innerWidth — keeps the WebGL backing buffer, viewport, and camera
+  // projection locked to what the user sees, even inside a resized pane.
   const dpr = window.devicePixelRatio || 1;
-  canvas.width  = window.innerWidth * dpr;
-  canvas.height = window.innerHeight * dpr;
-  camera.resize(window.innerWidth, window.innerHeight);
+  const cw = canvas.clientWidth || window.innerWidth;
+  const ch = canvas.clientHeight || window.innerHeight;
+  canvas.width  = Math.round(cw * dpr);
+  canvas.height = Math.round(ch * dpr);
+  camera.resize(cw, ch);
   if (gl) gl.viewport(0, 0, canvas.width, canvas.height);
 }
 
@@ -79,6 +84,11 @@ gl = initWebGL(canvas);
 gl.viewport(0, 0, canvas.width, canvas.height);
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
+// ResizeObserver: fires on ANY container size change (pane resizes, devtools,
+// splitter drags) — window 'resize' alone misses those.
+if (typeof ResizeObserver !== 'undefined') {
+  new ResizeObserver(() => resizeCanvas()).observe(document.getElementById('game-container'));
+}
 
 const spriteRenderer = new InstancedRenderer(gl);
 const overlayRenderer = new OverlayRenderer(gl);
@@ -489,8 +499,20 @@ function updateTooltip() {
     }
   }
   tooltipEl.style.display = 'block';
-  tooltipEl.style.left = (mouse.x + 16) + 'px';
-  tooltipEl.style.top = (mouse.y + 16) + 'px';
+
+  // Edge collision: cache the tip's size AFTER injecting text, then flip the
+  // anchor if it would clip past the right/bottom window edges.
+  const pad = 12;
+  const tw = tooltipEl.offsetWidth;
+  const th = tooltipEl.offsetHeight;
+  let lx = mouse.x + 16;
+  let ly = mouse.y + 16;
+  if (lx + tw + pad > window.innerWidth) lx = mouse.x - tw - pad;
+  if (ly + th + pad > window.innerHeight) ly = mouse.y - th - pad;
+  lx = Math.max(4, lx);
+  ly = Math.max(4, ly);
+  tooltipEl.style.left = lx + 'px';
+  tooltipEl.style.top = ly + 'px';
 }
 
 // ═══════════════════════════════════════════════════════
