@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Factory Sim — Phase 2</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    html,body{width:100%;height:100%;overflow:hidden;background:#111;font-family:monospace}
+    #gc{position:relative;width:100%;height:100%}
+    #cv{display:block;width:100%;height:100%}
+    #ui{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
+    #ui>*{pointer-events:auto}
+    #hud{position:absolute;top:12px;left:12px;color:#0f0;font-size:12px;line-height:1.55;text-shadow:0 0 4px #000;pointer-events:none}
+    #tb{position:absolute;left:12px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:3px}
+    .tb{width:44px;height:40px;background:rgba(0,0,0,.7);border:1px solid #555;color:#bbb;font-size:9px;cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:3px}
+    .tb:hover,.tb.a{border-color:#0f0;color:#0f0}
+    #tip{position:absolute;display:none;background:rgba(10,10,10,.92);border:1px solid #0f0;color:#ccc;font-size:11px;padding:6px 10px;border-radius:3px;white-space:pre;pointer-events:none;z-index:100;max-width:300px}
+    #pwr{position:absolute;top:12px;right:12px;width:180px;text-align:right;pointer-events:none}
+    #pwr-bar{width:100%;height:14px;background:#333;border:1px solid #555;border-radius:2px;margin-top:4px}
+    #pwr-fill{height:100%;background:#0f0;border-radius:2px;transition:width .2s,background .2s}
+    #pwr-txt{color:#0f0;font-size:12px;text-shadow:0 0 4px #000}
+    #hint{position:absolute;bottom:50px;left:50%;transform:translateX(-50%);color:#ff0;font-size:13px;text-shadow:0 0 4px #000;display:none;pointer-events:none}
+  </style>
+</head>
+<body>
+<div id="gc">
+  <canvas id="cv"></canvas>
+  <div id="ui">
+    <div id="hud"></div>
+    <div id="pwr"><div id="pwr-txt">Power: 100%</div><div id="pwr-bar"><div id="pwr-fill" style="width:100%"></div></div></div>
+    <div id="tb">
+      <button class="tb a" data-t="select">SEL</button>
+      <button class="tb" data-t="miner">MINE</button>
+      <button class="tb" data-t="belt">BILT</button>
+      <button class="tb" data-t="smelter">SMELT</button>
+      <button class="tb" data-t="assembler">ASSM</button>
+      <button class="tb" data-t="pole">PWR</button>
+      <button class="tb" data-t="generator">GEN</button>
+      <button class="tb" data-t="eraser">ERSE</button>
+    </div>
+    <div id="tip"></div>
+    <div id="hint"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// ══════════════════════════════════════════════════════════════
+//  CONSTANTS
+// ══════════════════════════════════════════════════════════════
+const CHUNK=32, TS=16, MAX_E=100000, STRIDE=5, BELT_SPD=2.0, MAX_BI=200000;
+const T_GRASS=0,T_WATER=1,T_STONE=2;
+const R_NONE=0,R_IRON=1,R_COPPER=2;
+const I_IRON_ORE=0,I_COP_ORE=1,I_IRON_INGOT=2,I_COP_INGOT=3,I_GEAR=4,I_CIRCUIT=5;
+const M_NONE=0,M_MINER=1,M_SMELTER=2,M_ASSEMBLER=3,M_GENERATOR=4,M_POLE=5;
+const C_POS=1n<<0n,C_SPR=1n<<2n,C_MAC=1n<<4n;
+
+// ══════════════════════════════════════════════════════════════
+//  ECS
+// ══════════════════════════════════════════════════════════════
+class Pool{
+  constructor(n=MAX_E){this.n=n;this.alive=new Uint32Array(n);this.masks=new BigUint64Array(n);this.count=0;
+    this.stk=new Uint32Array(n);this.top=0;for(let i=n-1;i>=0;i--)this.stk[this.top++]=i;}
+  create(){if(!this.top)return -1;const id=this.stk[--this.top];this.alive[id]=1;this.masks[id]=0n;this.count++;return id;}
+  destroy(id){if(!this.alive[id])return;this.alive[id]=0;this.masks[id]=0n;this.count--;this.stk[this.top++]=id;}
+  has(id,r){return(this.masks[id]&r)===r;}
+  query(r,fn){for(let i=0;i<this.n;i++)if(this.alive[i]&&this.has(i,r))fn(i);}
+}
+
+class Comp{
+  constructor(n=MAX_E){
+    this.x=new Float32Array(n);this.y=new Float32Array(n);
+    this.sp=new Uint16Array(n); // sprite index
+    this.mt=new Uint8Array(n); // machine type
+    this.pt=new Float32Array(n); // process timer
+    this.pd=new Float32Array(n); // power draw
+    this.pg=new Float32Array(n); // power gen
+    this.ip=new Uint8Array(n); // is powered
+    this.spd=new Float32Array(n); // current speed ratio
+    this.out=new Uint8Array(n); // output item type
+    this.inp=new Uint8Array(n); // input item type
+    this.inc=new Uint8Array(n); // input count
+    this.inr=new Uint8Array(n); // input required
+    this.res=new Uint8Array(n); // resource type (for miners)
+    this.prt=new Float32Array(n); // base process time
+  }
+}
+
+class World{
+  constructor(){this.pool=new Pool();this.c=new Comp();}
+  spawn(m){const id=this.pool.create();if(id===-1)return-1;this.pool.masks[id]=m;return id;}
+  destroy(id){this.pool.destroy(id);}
+  query(m,fn){this.pool.query(m,fn);}
+}
+
+// ══════════════════════════════════════════════════════════════
+//  TERRAIN / NOISE
+// ══════════════════════════════════════════════════════════════
+function hash(x,y,s){let h=s+x*374761393+y*668265263;h=(h^(h>>13))*1274126177;h=h^(h>>16);return(h&0x7fffffff)/0x7fffffff;}
+function sn(x,y,s){const ix=Math.floor(x),iy=Math.floor(y),fx=x-ix,fy=y-iy;
+  const u=fx*fx*(3-2*fx),v=fy*fy*(3-2*fy);
+  const a=hash(ix,iy,s),b=hash(ix+1,iy,s),c=hash(ix,iy+1,s),d=hash(ix+1,iy+1,s);
+  return a+(b-a)*u+(c-a)*v+(a-b-c+d)*u*v;}
+function fbm(x,y,s,o=4){let v=0,a=.5,f=1;for(let i=0;i<o;i++){v+=a*sn(x*f,y*f,s+i*1000);a*=.5;f*=2;}return v;}
+
+const chunks=new Map();
+function ck(cx,cy){return cx+','+cy;}
+function getCh(cx,cy){
+  const k=ck(cx,cy);let ch=chunks.get(k);
+  if(!ch){
+    ch={t:new Uint8Array(CHUNK*CHUNK),r:new Float32Array(CHUNK*CHUNK),rt:new Uint8Array(CHUNK*CHUNK)};
+    for(let ly=0;ly<CHUNK;ly++)for(let lx=0;lx<CHUNK;lx++){
+      const wx=cx*CHUNK+lx,wy=cy*CHUNK+ly;
+      const h=fbm(wx*.02,wy*.02,42);
+      let tile=h<.3?T_WATER:h>.7?T_STONE:T_GRASS;
+      ch.t[ly*CHUNK+lx]=tile;
+      const ore=fbm(wx*.05+500,wy*.05+500,1041,3);
+      if(ore>.45&&tile!==T_WATER){ch.r[ly*CHUNK+lx]=(ore-.45)*500;ch.rt[ly*CHUNK+lx]=ore>.6?R_COPPER:R_IRON;}
+    }
+    chunks.set(k,ch);
+  }return ch;
+}
+
+function getTile(wx,wy){
+  const cx=Math.floor(wx/CHUNK),cy=Math.floor(wy/CHUNK),ch=getCh(cx,cy);
+  const lx=((wx%CHUNK)+CHUNK)%CHUNK,ly=((wy%CHUNK)+CHUNK)%CHUNK;
+  const i=ly*CHUNK+lx;
+  return{tile:ch.t[i],res:ch.r[i],resType:ch.rt[i]};
+}
+
+function consumeRes(wx,wy,amt){
+  const cx=Math.floor(wx/CHUNK),cy=Math.floor(wy/CHUNK),ch=getCh(cx,cy);
+  const lx=((wx%CHUNK)+CHUNK)%CHUNK,ly=((wy%CHUNK)+CHUNK)%CHUNK;
+  const i=ly*CHUNK+lx;
+  if(ch.r[i]>=amt){ch.r[i]-=amt;return ch.rt[i];}return R_NONE;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  BELT LINE — flat array, NOT individual entities
+// ══════════════════════════════════════════════════════════════
+let blId=0;
+const beltLines=new Map();
+
+class BeltLine{
+  constructor(path){
+    this.id=blId++;
+    this.path=path; // [{x,y},...] ordered tiles
+    this.items=[];  // [{type,progress}] progress in tiles along path
+    this.len=path.length;
+    this.jammed=false;
+  }
+  getPos(p){
+    const i=Math.min(Math.floor(p),this.len-1);
+    const f=p-i;const n=Math.min(i+1,this.len-1);
+    return{x:this.path[i].x+(this.path[n].x-this.path[i].x)*f+.5,
+           y:this.path[i].y+(this.path[n].y-this.path[i].y)*f+.5};
+  }
+  canInsert(){
+    if(!this.items.length)return true;
+    return this.items[0].progress>.6;
+  }
+  insert(type){
+    if(!this.canInsert())return false;
+    this.items.unshift({type,progress:0});
+    return true;
+  }
+}
+
+function updateBelts(dt,pr){
+  for(const[id,line]of beltLines){
+    line.jammed=false;
+    const spd=BELT_SPD*pr;
+    for(let i=line.items.length-1;i>=0;i--){
+      const it=line.items[i];
+      const maxP=line.len-.5;
+      // Back-pressure: items stored newest(idx0)→oldest(idxN), ahead = i+1
+      let blocked=false;
+      if(i<line.items.length-1&&line.items[i+1].progress-it.progress<.8)blocked=true;
+      if(!blocked&&it.progress<maxP){
+        it.progress+=spd*dt;
+        if(it.progress>maxP)it.progress=maxP;
+      }
+      // At end of line: try handoff to next belt or machine
+      if(it.progress>=maxP&&i===line.items.length-1){
+        const end=line.path[line.path.length-1];
+        // Try next belt line
+        const next=findNextBelt(end,line);
+        if(next&&next.canInsert()){
+          next.insert(it.type);line.items.splice(i,1);
+        }else{
+          // Try adjacent machine pickup
+          const mac=findAdjMachine(end);
+          if(mac&&machineAccepts(mac,it.type)){
+            machineFeed(mac,it.type);
+            line.items.splice(i,1);
+          }else{
+            line.jammed=true;
+          }
+        }
+      }
+    }
+  }
+}
+
+function findNextBelt(tile,cur){
+  const ds=[[1,0],[-1,0],[0,1],[0,-1]];
+  for(const[dx,dy]of ds){
+    const nx=tile.x+dx,ny=tile.y+dy;
+    for(const[id,line]of beltLines){
+      if(line===cur)continue;
+      if(line.path[0].x===nx&&line.path[0].y===ny)return line;
+    }
+  }return null;
+}
+
+function findAdjMachine(tile){
+  const ds=[[1,0],[-1,0],[0,1],[0,-1]];
+  const w=world;
+  for(const[dx,dy]of ds){
+    const mx=tile.x+dx,my=tile.y+dy;
+    let found=-1;
+    w.query(C_POS|C_MAC,(id)=>{
+      if(found>=0)return;
+      if(Math.floor(w.c.x[id])===mx&&Math.floor(w.c.y[id])===my)found=id;
+    });
+    if(found>=0)return found;
+  }return-1;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  POWER GRID — proportional scaling (O(n) single pass)
+// ══════════════════════════════════════════════════════════════
+let totGen=0,totReq=0,pwrRatio=1;
+
+function updatePower(w){
+  totGen=0;totReq=0;
+  w.query(C_POS|C_MAC,(id)=>{
+    const mt=w.c.mt[id];
+    if(mt===M_GENERATOR)totGen+=w.c.pg[id];
+    else if(mt!==M_NONE&&mt!==M_POLE)totReq+=w.c.pd[id];
+  });
+  pwrRatio=totReq===0?1:Math.min(1,totGen/totReq);
+  w.query(C_POS|C_MAC,(id)=>{
+    const mt=w.c.mt[id];
+    if(mt!==M_NONE&&mt!==M_POLE){w.c.spd[id]=pwrRatio;w.c.ip[id]=pwrRatio>0?1:0;}
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+//  MINER SYSTEM
+// ══════════════════════════════════════════════════════════════
+function updateMiners(w,dt){
+  w.query(C_POS|C_MAC,(id)=>{
+    if(w.c.mt[id]!==M_MINER||!w.c.ip[id])return;
+    const wx=Math.floor(w.c.x[id]),wy=Math.floor(w.c.y[id]);
+    const ti=getTile(wx,wy);
+    if(ti.res<=0||ti.resType===R_NONE)return;
+    w.c.pt[id]+=dt*w.c.spd[id];
+    if(w.c.pt[id]>=1.0){
+      w.c.pt[id]=0;
+      const itemType=ti.resType===R_IRON?I_IRON_ORE:I_COP_ORE;
+      if(pushFromMachine(wx,wy,itemType))consumeRes(wx,wy,1);
+    }
+  });
+}
+
+function pushFromMachine(wx,wy,type){
+  const ds=[[1,0],[-1,0],[0,1],[0,-1]];
+  for(const[dx,dy]of ds){
+    for(const[id,line]of beltLines){
+      if(line.path[0].x===wx+dx&&line.path[0].y===wy+dy&&line.canInsert()){
+        line.insert(type);return true;
+      }
+    }
+  }return false;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SMELTER SYSTEM
+// ══════════════════════════════════════════════════════════════
+const SMELT_T=3.0;
+const SMELT_R={[I_IRON_ORE]:I_IRON_INGOT,[I_COP_ORE]:I_COP_INGOT};
+
+function machineAccepts(id,type){
+  const mt=world.c.mt[id];
+  if(mt===M_SMELTER)return SMELT_R[type]!==undefined;
+  if(mt===M_ASSEMBLER)return type===I_IRON_INGOT; // gear recipe: 2 iron ingots
+  return false;
+}
+
+function machineFeed(id,type){
+  const w=world,m=w.c;
+  if(m.mt[id]===M_SMELTER&&m.inc[id]<m.inr[id]){m.inp[id]=type;m.inc[id]++;}
+  if(m.mt[id]===M_ASSEMBLER&&m.inc[id]<m.inr[id]){m.inp[id]=type;m.inc[id]++;}
+}
+
+function updateSmelters(w,dt){
+  w.query(C_POS|C_MAC,(id)=>{
+    if(w.c.mt[id]!==M_SMELTER||!w.c.ip[id])return;
+    if(w.c.inc[id]>0){
+      w.c.pt[id]+=dt*w.c.spd[id];
+      if(w.c.pt[id]>=SMELT_T){
+        w.c.pt[id]=0;w.c.inc[id]--;
+        const outType=SMELT_R[w.c.inp[id]];
+        if(outType!==undefined){
+          const wx=Math.floor(w.c.x[id]),wy=Math.floor(w.c.y[id]);
+          pushFromMachine(wx,wy,outType);
+        }
+      }
+    }
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+//  ASSEMBLER SYSTEM (2 iron ingots → 1 gear)
+// ══════════════════════════════════════════════════════════════
+const ASM_T=5.0;
+
+function updateAssemblers(w,dt){
+  w.query(C_POS|C_MAC,(id)=>{
+    if(w.c.mt[id]!==M_ASSEMBLER||!w.c.ip[id])return;
+    if(w.c.inc[id]>=w.c.inr[id]){
+      w.c.pt[id]+=dt*w.c.spd[id];
+      if(w.c.pt[id]>=ASM_T){
+        w.c.pt[id]=0;w.c.inc[id]=0;
+        const wx=Math.floor(w.c.x[id]),wy=Math.floor(w.c.y[id]);
+        pushFromMachine(wx,wy,I_GEAR);
+      }
+    }
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+//  CAMERA
+// ══════════════════════════════════════════════════════════════
+class Camera{
+  constructor(w,h){this.x=0;this.y=0;this.zoom=2.5;this.w=w;this.h=h;}
+  pan(dx,dy){const s=TS*this.zoom;this.x-=dx/s;this.y-=dy/s;}
+  zoomAt(sx,sy,f){const oz=this.zoom;this.zoom=Math.max(.25,Math.min(8,this.zoom*f));
+    const s=TS*this.zoom,os=TS*oz;
+    this.x+=(sx-this.w/2)/os-(sx-this.w/2)/s;this.y+=(sy-this.h/2)/os-(sy-this.h/2)/s;}
+  screenToWorld(sx,sy){const s=TS*this.zoom;return[this.x+(sx-this.w/2)/s,this.y+(sy-this.h/2)/s];}
+  getProjection(){const s=TS*this.zoom;
+    const l=this.x*s-this.w/2,r=this.x*s+this.w/2,b=this.y*s+this.h/2,t=this.y*s-this.h/2;
+    return new Float32Array([2/(r-l),0,0,0, 0,2/(t-b),0,0, 0,0,-1,0, -(r+l)/(r-l),-(t+b)/(t-b),0,1]);}
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SPRITE ATLAS
+// ══════════════════════════════════════════════════════════════
+function createAtlas(){
+  const S=16,COLS=16;const w=COLS*S,c=document.createElement('canvas');
+  c.width=w;c.height=w;const g=c.getContext('2d');g.clearRect(0,0,w,w);
+  function at(i){g.save();g.translate((i%COLS)*S,Math.floor(i/COLS)*S);}
+  function en(){g.restore();}
+
+  at(0);g.fillStyle='#2d5a1e';g.fillRect(0,0,16,16);g.fillStyle='#3a7a28';for(let i=0;i<6;i++)g.fillRect(2+(i*13)%14,3+(i*7)%10,1,3);en();
+  at(1);g.fillStyle='#1a3d7a';g.fillRect(0,0,16,16);g.fillStyle='#2a5daa';for(let i=0;i<3;i++)g.fillRect(1,3+i*5,14,1);en();
+  at(2);g.fillStyle='#665e58';g.fillRect(0,0,16,16);g.fillStyle='#8a7e75';g.fillRect(3,3,5,4);g.fillRect(9,8,4,5);en();
+  at(3);g.fillStyle='#2d5a1e';g.fillRect(0,0,16,16);g.fillStyle='#888';g.fillRect(4,3,8,10);g.fillStyle='#aa6633';g.fillRect(6,5,4,4);g.fillStyle='#ccc';g.fillRect(7,9,2,3);en();
+  at(4);g.fillStyle='#2d5a1e';g.fillRect(0,0,16,16);g.fillStyle='#774422';g.fillRect(3,4,10,8);g.fillStyle='#cc4400';g.fillRect(5,6,6,4);g.fillStyle='#ff8800';g.fillRect(6,7,4,2);en();
+  at(5);g.fillStyle='#2d5a1e';g.fillRect(0,0,16,16);g.fillStyle='#555';g.fillRect(2,3,12,10);g.fillStyle='#4488cc';g.fillRect(4,5,8,6);g.fillStyle='#66aaff';g.fillRect(6,7,4,2);en();
+  at(6);g.fillStyle='#2d5a1e';g.fillRect(0,0,16,16);g.fillStyle='#666';g.fillRect(3,2,10,12);g.fillStyle='#44aa44';g.fillRect(5,4,6,3);g.fillStyle='#aaa';g.fillRect(6,8,4,4);en();
+  at(7);g.fillStyle='#2d5a1e';g.fillRect(0,0,16,16);g.fillStyle='#556';g.fillRect(0,5,16,6);g.fillStyle='#889';for(let i=0;i<4;i++)g.fillRect(1+i*4,7,2,2);en();
+  at(8);g.fillStyle='#2d5a1e';g.fillRect(0,0,16,16);g.fillStyle='#556';g.fillRect(5,0,6,16);g.fillStyle='#889';for(let i=0;i<4;i++)g.fillRect(7,1+i*4,2,2);en();
+  at(9);g.fillStyle='#2d5a1e';g.fillRect(0,0,16,16);g.fillStyle='#556';g.fillRect(0,5,16,6);g.fillRect(8,5,6,6);en();
+  at(10);g.fillStyle='#2d5a1e';g.fillRect(0,0,16,16);g.fillStyle='#556';g.fillRect(5,0,6,16);g.fillRect(5,8,6,6);en();
+  at(11);g.fillStyle='#2d5a1e';g.fillRect(0,0,16,16);g.fillStyle='#886633';g.fillRect(7,2,2,12);g.fillStyle='#ccaa44';g.fillRect(5,2,6,2);g.fillRect(5,5,6,2);en();
+  at(12);g.fillStyle='#8899aa';g.fillRect(4,4,8,8);g.fillStyle='#aabbcc';g.fillRect(5,5,3,3);g.fillRect(9,7,2,2);en();
+  at(13);g.fillStyle='#886633';g.fillRect(4,4,8,8);g.fillStyle='#cc8844';g.fillRect(5,5,3,3);g.fillRect(8,8,3,2);en();
+  at(14);g.fillStyle='#999';g.fillRect(5,5,6,6);g.fillStyle='#bbb';g.fillRect(6,6,4,4);g.fillStyle='#777';g.fillRect(7,7,2,2);g.fillStyle='#999';g.fillRect(7,3,2,2);g.fillRect(7,11,2,2);g.fillRect(3,7,2,2);g.fillRect(11,7,2,2);en();
+  at(15);g.fillStyle='#aabbcc';g.fillRect(3,6,10,5);g.fillStyle='#ccddee';g.fillRect(4,7,8,3);en();
+  // 16: copper ingot
+  at(16);g.fillStyle='#cc8844';g.fillRect(3,6,10,5);g.fillStyle='#eeaa66';g.fillRect(4,7,8,3);en();
+  // 17: machine off (dark)
+  at(17);g.fillStyle='#2d5a1e';g.fillRect(0,0,16,16);g.fillStyle='#444';g.fillRect(3,3,10,10);g.fillStyle='#a00';g.fillRect(7,7,2,2);en();
+  // 18: item dot (generic)
+  at(18);g.fillStyle='#dd0';g.fillRect(5,5,6,6);g.fillStyle='#ff6';g.fillRect(6,6,4,4);en();
+  // 19: miner active
+  at(19);g.fillStyle='#2d5a1e';g.fillRect(0,0,16,16);g.fillStyle='#aaa';g.fillRect(4,3,8,10);g.fillStyle='#cc8833';g.fillRect(6,5,4,4);g.fillStyle='#ffa';g.fillRect(7,9,2,3);en();
+  // 20: smelter active
+  at(20);g.fillStyle='#2d5a1e';g.fillRect(0,0,16,16);g.fillStyle='#885533';g.fillRect(3,4,10,8);g.fillStyle='#ee5500';g.fillRect(5,6,6,4);g.fillStyle='#ffaa00';g.fillRect(6,7,4,2);en();
+  // 21: assembler active
+  at(21);g.fillStyle='#2d5a1e';g.fillRect(0,0,16,16);g.fillStyle='#666';g.fillRect(2,3,12,10);g.fillStyle='#55aaee';g.fillRect(4,5,8,6);g.fillStyle='#88ccff';g.fillRect(6,7,4,2);en();
+  // 22: generator active
+  at(22);g.fillStyle='#2d5a1e';g.fillRect(0,0,16,16);g.fillStyle='#777';g.fillRect(3,2,10,12);g.fillStyle='#55cc55';g.fillRect(5,4,6,3);g.fillStyle='#bbb';g.fillRect(6,8,4,4);en();
+
+  return{canvas:c,cols:COLS,size:S};
+}
+
+// ══════════════════════════════════════════════════════════════
+//  WEBGL
+// ══════════════════════════════════════════════════════════════
+function initGL(cv){
+  const gl=cv.getContext('webgl2',{antialias:false,alpha:false,preserveDrawingBuffer:true});
+  if(!gl)throw'No WebGL2';gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.clearColor(.05,.05,.08,1);return gl;
+}
+function mkShader(gl,t,s){const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);
+  if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw gl.getShaderInfoLog(sh);return sh;}
+function mkProg(gl,v,f){const p=gl.createProgram();gl.attachShader(p,mkShader(gl,gl.VERTEX_SHADER,v));
+  gl.attachShader(p,mkShader(gl,gl.FRAGMENT_SHADER,f));gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw gl.getProgramInfoLog(p);return p;}
+
+const tVS=`#version 300 es
+in vec2 a_pos;in float a_tile;uniform mat4 u_proj;uniform float u_ts;
+out float v_tile;out vec2 v_uv;
+void main(){v_tile=a_tile;v_uv=fract(a_pos);
+gl_Position=u_proj*vec4(floor(a_pos)*u_ts+fract(a_pos)*u_ts,0,1);}`;
+const tFS=`#version 300 es
+precision highp float;in float v_tile;in vec2 v_uv;out vec4 frag;
+void main(){vec3 g=vec3(.18,.35,.12),w=vec3(.1,.2,.55),s=vec3(.4,.38,.35);
+vec3 c=v_tile<.5?g:v_tile<1.5?w:s;
+vec2 gr=smoothstep(.02,.04,v_uv)*(1.-smoothstep(.96,.98,v_uv));
+c*=.85+.15*gr.x*gr.y;frag=vec4(c,1);}`;
+
+const sVS=`#version 300 es
+in vec2 a_quad;in vec2 a_uv;in vec2 a_pos;in float a_sidx;
+uniform mat4 u_proj;uniform float u_ts;uniform float u_acols;out vec2 v_uv;
+void main(){float col=mod(a_sidx,u_acols);float row=floor(a_sidx/u_acols);
+v_uv=vec2(col,row)/u_acols+a_uv/u_acols;
+vec2 wp=a_pos*u_ts+a_quad*u_ts*.5;gl_Position=u_proj*vec4(wp,0,1);}`;
+const sFS=`#version 300 es
+precision highp float;in vec2 v_uv;uniform sampler2D u_atlas;out vec4 frag;
+void main(){vec4 c=texture(u_atlas,v_uv);if(c.a<.01)discard;frag=c;}`;
+
+// ══════════════════════════════════════════════════════════════
+//  CHUNK MESH
+// ══════════════════════════════════════════════════════════════
+function buildMesh(gl,prog,cx,cy,ch){
+  const v=[];const ox=cx*CHUNK,oy=cy*CHUNK;
+  for(let ly=0;ly<CHUNK;ly++)for(let lx=0;lx<CHUNK;lx++){
+    const t=ch.t[ly*CHUNK+lx],wx=ox+lx,wy=oy+ly;
+    v.push(wx,wy,t,wx+1,wy,t,wx+1,wy+1,t);
+    v.push(wx,wy,t,wx+1,wy+1,t,wx,wy+1,t);
+  }
+  const d=new Float32Array(v);const va=gl.createVertexArray();const vb=gl.createBuffer();
+  gl.bindVertexArray(va);gl.bindBuffer(gl.ARRAY_BUFFER,vb);gl.bufferData(gl.ARRAY_BUFFER,d,gl.STATIC_DRAW);
+  const lp=gl.getAttribLocation(prog,'a_pos'),lt=gl.getAttribLocation(prog,'a_tile');
+  gl.enableVertexAttribArray(lp);gl.vertexAttribPointer(lp,2,gl.FLOAT,false,12,0);
+  gl.enableVertexAttribArray(lt);gl.vertexAttribPointer(lt,1,gl.FLOAT,false,12,8);
+  gl.bindVertexArray(null);return{va,cnt:v.length/3};
+}
+
+// ══════════════════════════════════════════════════════════════
+//  MAIN INIT
+// ══════════════════════════════════════════════════════════════
+const cv=document.getElementById('cv');
+const hudE=document.getElementById('hud');
+const tipE=document.getElementById('tip');
+const hintE=document.getElementById('hint');
+const pwTxt=document.getElementById('pwr-txt');
+const pwFill=document.getElementById('pwr-fill');
+
+function resize(){const d=window.devicePixelRatio||1;cv.width=window.innerWidth*d;cv.height=window.innerHeight*d;}
+resize();window.addEventListener('resize',resize);
+
+const gl=initGL(cv);gl.viewport(0,0,cv.width,cv.height);
+window.addEventListener('resize',()=>{resize();gl.viewport(0,0,cv.width,cv.height);if(cam){cam.w=cv.width;cam.h=cv.height;}});
+
+const tProg=mkProg(gl,tVS,tFS);const sProg=mkProg(gl,sVS,sFS);
+const uPT=gl.getUniformLocation(tProg,'u_proj'),uTT=gl.getUniformLocation(tProg,'u_ts');
+const uPS=gl.getUniformLocation(sProg,'u_proj'),uTS=gl.getUniformLocation(sProg,'u_ts');
+const uAC=gl.getUniformLocation(sProg,'u_acols'),uAt=gl.getUniformLocation(sProg,'u_atlas');
+
+const atlas=createAtlas();
+const atTex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,atTex);
+gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,atlas.canvas);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+
+// Instanced sprite VAO
+const qV=new Float32Array([-1,-1,0,1, 1,-1,1,1, 1,1,1,0, -1,-1,0,1, 1,1,1,0, -1,1,0,0]);
+const sVAO=gl.createVertexArray();const sVBO=gl.createBuffer();const iVBO=gl.createBuffer();
+const iData=new Float32Array((MAX_E+MAX_BI)*STRIDE);
+gl.bindVertexArray(sVAO);
+gl.bindBuffer(gl.ARRAY_BUFFER,sVBO);gl.bufferData(gl.ARRAY_BUFFER,qV,gl.STATIC_DRAW);
+const qL=gl.getAttribLocation(sProg,'a_quad'),uL=gl.getAttribLocation(sProg,'a_uv');
+gl.enableVertexAttribArray(qL);gl.vertexAttribPointer(qL,2,gl.FLOAT,false,16,0);
+gl.enableVertexAttribArray(uL);gl.vertexAttribPointer(uL,2,gl.FLOAT,false,16,8);
+gl.bindBuffer(gl.ARRAY_BUFFER,iVBO);gl.bufferData(gl.ARRAY_BUFFER,iData.byteLength,gl.DYNAMIC_DRAW);
+const pL=gl.getAttribLocation(sProg,'a_pos'),sL=gl.getAttribLocation(sProg,'a_sidx');
+gl.enableVertexAttribArray(pL);gl.vertexAttribPointer(pL,2,gl.FLOAT,false,20,0);gl.vertexAttribDivisor(pL,1);
+gl.enableVertexAttribArray(sL);gl.vertexAttribPointer(sL,1,gl.FLOAT,false,20,8);gl.vertexAttribDivisor(sL,1);
+gl.bindVertexArray(null);
+
+const cam=new Camera(cv.width,cv.height);
+
+// ══════════════════════════════════════════════════════════════
+//  INPUT
+// ══════════════════════════════════════════════════════════════
+const keys=new Set();
+window.addEventListener('keydown',e=>keys.add(e.code));
+window.addEventListener('keyup',e=>keys.delete(e.code));
+let mx=0,my=0,whl=0,pan=false,psx=0,psy=0;
+
+cv.addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;
+  if(pan){cam.pan(e.clientX-psx,e.clientY-psy);psx=e.clientX;psy=e.clientY;}});
+cv.addEventListener('mousedown',e=>{
+  if(e.button===1||e.button===2){pan=true;psx=e.clientX;psy=e.clientY;e.preventDefault();}
+  else if(e.button===0)handleClick(e.clientX,e.clientY);
+});
+cv.addEventListener('mouseup',e=>{if(e.button===1||e.button===2)pan=false;});
+cv.addEventListener('wheel',e=>{whl+=e.deltaY>0?-1:1;e.preventDefault();},{passive:false});
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+
+// Toolbar
+let tool='select';
+document.querySelectorAll('.tb').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('.tb').forEach(x=>x.classList.remove('a'));
+  b.classList.add('a');tool=b.dataset.t;beltStart=null;updateHint();
+}));
+
+// ══════════════════════════════════════════════════════════════
+//  BUILDING PLACEMENT
+// ══════════════════════════════════════════════════════════════
+let beltStart=null;
+
+function updateHint(){
+  if(tool==='belt'){hintE.style.display='block';hintE.textContent=beltStart?'Click end for belt':'Click start for belt';}
+  else if(tool!=='select'&&tool!=='eraser'){hintE.style.display='block';hintE.textContent='Click to place '+tool;}
+  else hintE.style.display='none';
+}
+
+function handleClick(cx,cy){
+  if(tool==='select')return;
+  const[wx,wy]=cam.screenToWorld(cx,cy);
+  const twx=Math.floor(wx),twy=Math.floor(wy);
+
+  if(tool==='eraser'){
+    world.query(C_POS|C_MAC,id=>{
+      if(Math.floor(world.c.x[id])===twx&&Math.floor(world.c.y[id])===twy)world.destroy(id);
+    });
+    for(const[id,line]of beltLines){
+      for(const p of line.path){if(p.x===twx&&p.y===twy){beltLines.delete(id);break;}}
+    }return;
+  }
+
+  if(tool==='belt'){
+    if(!beltStart){beltStart={x:twx,y:twy};updateHint();return;}
+    const path=[];
+    const dx=twx-beltStart.x,dy=twy-beltStart.y;
+    if(Math.abs(dx)>=Math.abs(dy)){
+      const st=dx>0?1:-1;
+      for(let x=beltStart.x;x!==twx+st;x+=st)path.push({x,y:beltStart.y});
+      if(dy!==0){const sy=dy>0?1:-1;for(let y=beltStart.y+sy;y!==twy+sy;y+=sy)path.push({x:twx,y});}
+    }else{
+      const st=dy>0?1:-1;
+      for(let y=beltStart.y;y!==twy+st;y+=st)path.push({x:beltStart.x,y});
+      if(dx!==0){const sx=dx>0?1:-1;for(let x=beltStart.x+sx;x!==twx+sx;x+=sx)path.push({x,y:twy});}
+    }
+    if(path.length>0){const bl=new BeltLine(path);beltLines.set(bl.id,bl);}
+    beltStart=null;updateHint();return;
+  }
+
+  // Place machine
+  const id=world.spawn(C_POS|C_SPR|C_MAC);if(id===-1)return;
+  world.c.x[id]=twx+.5;world.c.y[id]=twy+.5;
+
+  switch(tool){
+    case'miner':
+      world.c.mt[id]=M_MINER;world.c.sp[id]=3;world.c.pd[id]=5;world.c.prt[id]=1;break;
+    case'smelter':
+      world.c.mt[id]=M_SMELTER;world.c.sp[id]=4;world.c.pd[id]=10;world.c.inr[id]=1;break;
+    case'assembler':
+      world.c.mt[id]=M_ASSEMBLER;world.c.sp[id]=5;world.c.pd[id]=20;world.c.inr[id]=2;break;
+    case'generator':
+      world.c.mt[id]=M_GENERATOR;world.c.sp[id]=6;world.c.pg[id]=50;break;
+    case'pole':
+      world.c.mt[id]=M_POLE;world.c.sp[id]=11;break;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  INIT WORLD + STARTING SETUP
+// ══════════════════════════════════════════════════════════════
+const world=new World();
+
+for(let cy=-4;cy<=4;cy++)for(let cx=-4;cx<=4;cx++)getCh(cx,cy);
+
+// Place starting factory chain: generator → miner → belt → smelter
+(function(){
+  // Generator at origin
+  const g=world.spawn(C_POS|C_SPR|C_MAC);
+  world.c.x[g]=0.5;world.c.y[g]=0.5;
+  world.c.mt[g]=M_GENERATOR;world.c.sp[g]=6;world.c.pg[g]=50;
+
+  // Find iron ore nearby and place miner
+  let minerPos=null;
+  for(let r=1;r<40&&!minerPos;r++){
+    for(let dx=-r;dx<=r&&!minerPos;dx++){
+      for(let dy=-r;dy<=r&&!minerPos;dy++){
+        if(Math.abs(dx)!==r&&Math.abs(dy)!==r)continue;
+        const ti=getTile(dx,dy);
+        if(ti.resType===R_IRON&&ti.res>0)minerPos={x:dx,y:dy};
+      }
+    }
+  }
+  if(!minerPos)minerPos={x:3,y:0}; // fallback
+
+  const m=world.spawn(C_POS|C_SPR|C_MAC);
+  world.c.x[m]=minerPos.x+.5;world.c.y[m]=minerPos.y+.5;
+  world.c.mt[m]=M_MINER;world.c.sp[m]=3;world.c.pd[m]=5;world.c.prt[m]=1;
+
+  // Belt from miner output (right side) to smelter
+  const beltStart2={x:minerPos.x+1,y:minerPos.y};
+  const beltEnd={x:minerPos.x+4,y:minerPos.y};
+  const path=[];
+  for(let x=beltStart2.x;x<=beltEnd.x;x++)path.push({x,y:minerPos.y});
+  if(path.length>0){const bl=new BeltLine(path);beltLines.set(bl.id,bl);}
+
+  // Smelter at end of belt
+  const s=world.spawn(C_POS|C_SPR|C_MAC);
+  world.c.x[s]=beltEnd.x+1.5;world.c.y[s]=beltEnd.y+.5;
+  world.c.mt[s]=M_SMELTER;world.c.sp[s]=4;world.c.pd[s]=10;world.c.inr[s]=1;
+})();
+
+// Terrain meshes
+const tMeshes=new Map();
+function getMesh(cx,cy){const k=ck(cx,cy);if(!tMeshes.has(k))tMeshes.set(k,buildMesh(gl,tProg,cx,cy,getCh(cx,cy)));return tMeshes.get(k);}
+
+// ══════════════════════════════════════════════════════════════
+//  RENDER LOOP
+// ══════════════════════════════════════════════════════════════
+let lt=performance.now(),fc=0,lft=performance.now(),fps=0,rMs=0;
+
+function loop(now){
+  requestAnimationFrame(loop);
+  const dt=Math.min((now-lt)/1000,.05);lt=now;
+
+  // ── Camera Input ──
+  const PS=600;let dx=0,dy=0;
+  if(keys.has('KeyW')||keys.has('ArrowUp'))dy-=1;
+  if(keys.has('KeyS')||keys.has('ArrowDown'))dy+=1;
+  if(keys.has('KeyA')||keys.has('ArrowLeft'))dx-=1;
+  if(keys.has('KeyD')||keys.has('ArrowRight'))dx+=1;
+  if(dx&&dy){dx*=.707;dy*=.707;}
+  cam.pan(dx*PS*dt,dy*PS*dt);
+  if(whl){cam.zoomAt(mx,my,whl>0?1.15:1/1.15);whl=0;}
+
+  // ── Global Simulation (NO viewport culling) ──
+  updatePower(world);
+  updateMiners(world,dt);
+  updateSmelters(world,dt);
+  updateAssemblers(world,dt);
+  updateBelts(dt,pwrRatio);
+
+  // ── Pack Render Data ──
+  let cnt=0;
+
+  // Machines
+  world.query(C_POS|C_SPR|C_MAC,id=>{
+    const o=cnt*STRIDE;
+    iData[o]=world.c.x[id];iData[o+1]=world.c.y[id];
+    let sp=world.c.sp[id];
+    const mt=world.c.mt[id];
+    if(mt!==M_NONE&&mt!==M_POLE){
+      if(!world.c.ip[id])sp=17; // off
+      else if(mt===M_MINER)sp=world.c.inc[id]>0?19:19;
+      else if(mt===M_SMELTER)sp=world.c.inc[id]>0?20:4;
+      else if(mt===M_ASSEMBLER)sp=world.c.inc[id]>=world.c.inr[id]?21:5;
+      else if(mt===M_GENERATOR)sp=22;
+    }
+    iData[o+2]=sp;cnt++;
+  });
+
+  // Belt tiles
+  for(const[id,line]of beltLines){
+    for(let i=0;i<line.path.length-1;i++){
+      const p=line.path[i],n=line.path[i+1];
+      const o=cnt*STRIDE;
+      iData[o]=p.x+.5;iData[o+1]=p.y+.5;
+      iData[o+2]=n.x!==p.x?7:8; // H or V belt
+      cnt++;
+    }
+  }
+
+  // Belt items
+  const itemSpr=[12,13,15,16,14,18];
+  for(const[id,line]of beltLines){
+    for(const it of line.items){
+      const pos=line.getPos(it.progress);
+      const o=cnt*STRIDE;
+      iData[o]=pos.x;iData[o+1]=pos.y;
+      iData[o+2]=itemSpr[it.type]||18;
+      cnt++;
+    }
+  }
+
+  // ── Render ──
+  const rs=performance.now();
+  gl.viewport(0,0,cv.width,cv.height);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  const proj=cam.getProjection();
+
+  // Terrain
+  gl.useProgram(tProg);gl.uniformMatrix4fv(uPT,false,proj);gl.uniform1f(uTT,TS);
+  const s=TS*cam.zoom,hw=(cv.width/2)/s,hh=(cv.height/2)/s;
+  const x0=Math.floor((cam.x-hw)/CHUNK),x1=Math.floor((cam.x+hw)/CHUNK);
+  const y0=Math.floor((cam.y-hh)/CHUNK),y1=Math.floor((cam.y+hh)/CHUNK);
+  for(let cy=y0;cy<=y1;cy++)for(let cx=x0;cx<=x1;cx++){
+    const m=getMesh(cx,cy);gl.bindVertexArray(m.va);gl.drawArrays(gl.TRIANGLES,0,m.cnt);
+  }
+  gl.useProgram(null);
+
+  // Instanced sprites
+  if(cnt>0){
+    gl.useProgram(sProg);gl.uniformMatrix4fv(uPS,false,proj);gl.uniform1f(uTS,TS);gl.uniform1f(uAC,atlas.cols);
+    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,atTex);gl.uniform1i(uAt,0);
+    gl.bindBuffer(gl.ARRAY_BUFFER,iVBO);gl.bufferSubData(gl.ARRAY_BUFFER,0,iData.subarray(0,cnt*STRIDE));
+    gl.bindVertexArray(sVAO);gl.drawArraysInstanced(gl.TRIANGLES,0,6,cnt);
+    gl.bindVertexArray(null);gl.useProgram(null);
+  }
+  rMs=performance.now()-rs;
+
+  // ── HUD ──
+  fc++;if(now-lft>=1000){fps=fc;fc=0;lft=now;}
+  const[wx,wy]=cam.screenToWorld(mx,my);
+  let beltItems=0;for(const[id,l]of beltLines)beltItems+=l.items.length;
+  let macCnt=0;world.query(C_POS|C_MAC,()=>macCnt++);
+  const jammed=[...beltLines.values()].filter(l=>l.jammed).length;
+
+  hudE.innerHTML=
+    `<b>Factory Sim — Phase 2</b><br>`+
+    `FPS: ${fps}<br>`+
+    `Machines: ${macCnt}<br>`+
+    `Belt Lines: ${beltLines.size}<br>`+
+    `Belt Items: ${beltItems.toLocaleString()}<br>`+
+    `Jammed: ${jammed}<br>`+
+    `Render: ${rMs.toFixed(1)}ms<br>`+
+    `Zoom: ${cam.zoom.toFixed(2)}x<br>`+
+    `Tool: ${tool}${beltStart?' →':''}<br>`+
+    `Tile: (${Math.floor(wx)}, ${Math.floor(wy)})`;
+
+  pwTxt.textContent=`Power: ${(pwrRatio*100).toFixed(0)}% (${totGen.toFixed(0)}/${totReq.toFixed(0)} kW)`;
+  pwFill.style.width=(pwrRatio*100)+'%';
+  pwFill.style.background=pwrRatio>.5?'#0f0':pwrRatio>0?'#ff0':'#f00';
+  pwTxt.style.color=pwrRatio>.5?'#0f0':pwrRatio>0?'#ff0':'#f00';
+
+  // Tooltip
+  const ti=getTile(Math.floor(wx),Math.floor(wy));
+  const tN=['Grass','Water','Stone'],rN=['None','Iron','Copper'];
+  tipE.style.display='block';tipE.style.left=(mx+16)+'px';tipE.style.top=(my+16)+'px';
+  tipE.textContent=`(${Math.floor(wx)}, ${Math.floor(wy)})\n${tN[ti.tile]}\n${rN[ti.resType]} ${ti.res>0?ti.res.toFixed(1):''}`;
+}
+
+console.log('[Factory Sim Phase 2] Starting...');
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
